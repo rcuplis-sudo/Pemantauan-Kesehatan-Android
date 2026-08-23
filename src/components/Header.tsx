@@ -30,6 +30,13 @@ export const Header: React.FC<HeaderProps> = ({
   isMobileDrawerOpen,
   onToggleMobileDrawer
 }) => {
+  // Cek apakah aplikasi sudah terpasang (standalone / APK TWA)
+  const isInstalled = typeof window !== 'undefined' && (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as any).standalone === true ||
+    document.referrer.includes('android-app://')
+  );
+
   return (
     <header className="bg-white border-b border-slate-200/90 py-3 px-4 sm:px-6 md:px-8 flex items-center justify-between shadow-2xs z-20 shrink-0">
       
@@ -57,14 +64,17 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Action Buttons */}
       <div className="flex items-center gap-2">
         
-        {/* APK & PWA Guide Button */}
-        <button
-          onClick={onOpenApkGuide}
-          className="px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5 transform active:scale-95 cursor-pointer"
-        >
-          <Smartphone className="w-4 h-4 text-white" />
-          <span className="hidden sm:inline">Pasang</span> APK / PWA
-        </button>
+        {/* APK & PWA Guide Button (Hanya tampil di browser biasa, otomatis tersembunyi jika dibuka di APK / PWA yang sudah terpasang) */}
+        {!isInstalled && (
+          <button
+            onClick={onOpenApkGuide}
+            className="px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5 transform active:scale-95 cursor-pointer"
+            title="Panduan pasang APK atau instal PWA"
+          >
+            <Smartphone className="w-4 h-4 text-white" />
+            <span className="hidden sm:inline">Pasang</span> APK / PWA
+          </button>
+        )}
 
         {/* Google Drive Cloud Backup & Sync */}
         <button

@@ -38,27 +38,24 @@ export default function App() {
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Load from localStorage on mount
+  // Load from localStorage on mount (start clean without forced dummy data)
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as HealthEntry[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           setEntries(parsed);
         } else {
-          // Pre-load sample data for immediate visual delight if empty
-          setEntries(SAMPLE_HEALTH_DATA);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(SAMPLE_HEALTH_DATA));
+          setEntries([]);
         }
       } else {
-        // First time load with sample data
-        setEntries(SAMPLE_HEALTH_DATA);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(SAMPLE_HEALTH_DATA));
+        // Start completely clean for real health monitoring
+        setEntries([]);
       }
     } catch (e) {
       console.error('Error loading health data:', e);
-      setEntries(SAMPLE_HEALTH_DATA);
+      setEntries([]);
     }
     setIsInitialized(true);
   }, []);
