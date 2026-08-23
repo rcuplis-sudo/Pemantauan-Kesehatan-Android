@@ -38,6 +38,13 @@ export default function App() {
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Deteksi apakah aplikasi berjalan di dalam APK Android (TWA) atau PWA standalone terpasang
+  const isInstalledApp = typeof window !== 'undefined' && (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as any).standalone === true ||
+    document.referrer.includes('android-app://')
+  );
+
   // Load from localStorage on mount (start clean without forced dummy data)
   useEffect(() => {
     try {
@@ -386,13 +393,15 @@ export default function App() {
             <div>
               <strong>HealthTrack</strong> &bull; Aplikasi Pemantauan Kesehatan Mandiri
             </div>
-            <button
-              onClick={() => setIsApkGuideOpen(true)}
-              className="text-blue-600 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-              Ingin dijadikan file APK Android? Klik panduan di sini
-            </button>
+            {!isInstalledApp && (
+              <button
+                onClick={() => setIsApkGuideOpen(true)}
+                className="text-blue-600 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                Ingin dijadikan file APK Android? Klik panduan di sini
+              </button>
+            )}
           </footer>
 
         </div>
