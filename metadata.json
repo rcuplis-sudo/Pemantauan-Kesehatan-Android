@@ -1,0 +1,6 @@
+{
+  "name": "HealthTrack - Pemantauan Kesehatan",
+  "description": "Aplikasi pencatatan dan pemantauan metrik kesehatan (kardiovaskular, metabolik, fungsi hati, ginjal, FibroScan) dengan grafik tren interaktif, pencadangan otomatis Google Drive, dan fitur siap APK/PWA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
