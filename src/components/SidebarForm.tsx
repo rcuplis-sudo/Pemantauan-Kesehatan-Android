@@ -193,19 +193,24 @@ export const SidebarForm: React.FC<SidebarFormProps> = ({
     <aside className="w-full bg-white border-r border-slate-200 h-full flex flex-col shadow-2xl md:shadow-lg relative z-10 shrink-0 overflow-hidden">
       
       {/* Sidebar Header */}
-      <div className="p-5 bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex items-center justify-between shadow-xs">
+      <div className="p-5 bg-gradient-to-br from-emerald-800 via-teal-900 to-slate-900 text-white flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-inner">
-            <Heart className="w-5 h-5 text-white animate-pulse" />
+          <div className="w-11 h-11 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-inner overflow-hidden shrink-0">
+            <img 
+              src="/icon-192.png" 
+              alt="HealthTrack Logo" 
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
           </div>
           <div>
             <h1 className="text-lg font-black tracking-tight flex items-center gap-1.5">
               HealthTrack
-              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-md bg-white/20 border border-white/25">
+              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-md bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
                 v2.0
               </span>
             </h1>
-            <p className="text-xs text-blue-100/90 font-medium">Rekam Medis & Metrik Kesehatan</p>
+            <p className="text-xs text-emerald-100/90 font-medium">Pemantauan Kesehatan Diri</p>
           </div>
         </div>
 
