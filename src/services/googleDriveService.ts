@@ -28,6 +28,7 @@ const BACKUP_FOLDER_MIME = 'application/vnd.google-apps.folder';
 const STORAGE_AUTOSYNC_KEY = 'healthtrack_autosync_enabled';
 const STORAGE_USER_EMAIL_KEY = 'healthtrack_connected_email';
 const STORAGE_LAST_SYNC_KEY = 'healthtrack_last_synced_at';
+const STORAGE_CUSTOM_CLIENT_ID_KEY = 'healthtrack_custom_google_client_id';
 
 export class GoogleDriveService {
   private static tokenClient: any = null;
@@ -36,14 +37,41 @@ export class GoogleDriveService {
   private static syncInProgress: boolean = false;
 
   /**
-   * Mengambil Client ID dari environment atau fallback Google Cloud ID
+   * Mengambil Client ID dari storage kustom, environment, atau fallback
    */
   public static getClientId(): string {
+    try {
+      const customId = localStorage.getItem(STORAGE_CUSTOM_CLIENT_ID_KEY);
+      if (customId && customId.trim().length > 0) {
+        return customId.trim();
+      }
+    } catch {}
+
     return (
       (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
       (import.meta as any).env?.GOOGLE_CLIENT_ID ||
       '421102845950-web.apps.googleusercontent.com'
     );
+  }
+
+  public static getCustomClientId(): string {
+    try {
+      return localStorage.getItem(STORAGE_CUSTOM_CLIENT_ID_KEY) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  public static setCustomClientId(clientId: string): void {
+    try {
+      if (clientId && clientId.trim().length > 0) {
+        localStorage.setItem(STORAGE_CUSTOM_CLIENT_ID_KEY, clientId.trim());
+      } else {
+        localStorage.removeItem(STORAGE_CUSTOM_CLIENT_ID_KEY);
+      }
+      this.accessToken = null;
+      this.tokenExpiresAt = 0;
+    } catch {}
   }
 
   public static isAutoSyncEnabled(): boolean {
@@ -93,7 +121,111 @@ export class GoogleDriveService {
   }
 
   /**
-   * Meminta Access Token OAuth secara interaktif di browser
+   * Mengunduh cadangan JSON ke perangkat lokal secara instan (100% offline & bebas blokir Google)
+   */
+  public static downloadLocalJsonBackup(entries: HealthEntry[]): string {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+    const fileName = `healthtrack_backup_${dateStr}_${timeStr}.json`;
+
+    const payload = {
+      app: 'HealthTrack',
+      version: '2.0',
+      exportedAt: now.toISOString(),
+      recordCount: entries.length,
+      data: entries
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    this.setLastSyncTime();
+    return fileName;
+  }
+
+  /**
+   * Mengunduh data dalam format CSV untuk dibuka di Excel / Google Sheets
+   */
+  public static downloadLocalCsvBackup(entries: HealthEntry[]): string {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+    const fileName = `healthtrack_data_${dateStr}.csv`;
+
+    const paramKeys = Object.keys(paramConfig) as ParamKey[];
+    const headers = ['Tanggal', ...paramKeys.map(k => `"${paramConfig[k].label} (${paramConfig[k].unit})"`), 'Catatan'];
+
+    const rows = entries.map(entry => {
+      const vals = [
+        `"${entry.tanggal}"`,
+        ...paramKeys.map(k => (entry[k] !== undefined ? entry[k] : '')),
+        `"${(entry.catatan || '').replace(/"/g, '""')}"`
+      ];
+      return vals.join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    return fileName;
+  }
+
+  /**
+   * Berbagi berkas cadangan langsung ke aplikasi Google Drive / WhatsApp / Email melalui fitur Share HP
+   */
+  public static async shareBackupFile(entries: HealthEntry[]): Promise<boolean> {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+    const fileName = `healthtrack_backup_${dateStr}.json`;
+
+    const payload = {
+      app: 'HealthTrack',
+      version: '2.0',
+      exportedAt: now.toISOString(),
+      recordCount: entries.length,
+      data: entries
+    };
+
+    const jsonStr = JSON.stringify(payload, null, 2);
+    const file = new File([jsonStr], fileName, { type: 'application/json' });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: 'Cadangan Rekam Medis HealthTrack',
+          text: `Cadangan riwayat kesehatan (${entries.length} data) per ${dateStr}`
+        });
+        this.setLastSyncTime();
+        return true;
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.warn('Share cancelled or failed:', err);
+        }
+        return false;
+      }
+    } else {
+      // Fallback unduh berkas
+      this.downloadLocalJsonBackup(entries);
+      return true;
+    }
+  }
+
+  /**
+   * Meminta Access Token OAuth secara interaktif di browser dengan pesan error yang ramah
    */
   public static async requestAccessToken(silent: boolean = false): Promise<string> {
     // Jika token masih valid (dengan buffer 60 detik)
@@ -104,7 +236,7 @@ export class GoogleDriveService {
     return new Promise((resolve, reject) => {
       const initAuth = () => {
         if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
-          reject(new Error('Google Identity Services SDK belum selesai dimuat. Silakan muat ulang halaman.'));
+          reject(new Error('Google Identity Services SDK belum selesai dimuat. Silakan periksa koneksi internet Anda atau gunakan fitur "Cadangkan Berkas Langsung".'));
           return;
         }
 
@@ -127,19 +259,30 @@ export class GoogleDriveService {
 
                 resolve(tokenResponse.access_token);
               } else if (tokenResponse && tokenResponse.error) {
-                reject(new Error(`Autentikasi gagal: ${tokenResponse.error_description || tokenResponse.error}`));
+                let msg = tokenResponse.error_description || tokenResponse.error;
+                if (msg.includes('access_denied') || msg.includes('blocked') || msg.includes('restricted') || msg.includes('origin_mismatch')) {
+                  msg = 'Akses Google Drive diblokir oleh Google (kebijakan keamanan aplikasi baru/belum terverifikasi). Anda tetap bisa mencadangkan & memulihkan data 100% aman menggunakan tombol "Unduh Berkas Cadangan" atau "Simpan ke Drive lewat HP".';
+                }
+                reject(new Error(msg));
               } else {
-                reject(new Error('Gagal mendapatkan token akses Google Drive.'));
+                reject(new Error('Gagal mendapatkan token akses Google Drive. Silakan gunakan opsi Cadangan Berkas Langsung.'));
               }
             },
             error_callback: (err: any) => {
-              reject(new Error(`OAuth Error: ${err.message || 'Pop-up otorisasi ditutup atau diblokir.'}`));
+              const rawMsg = err?.message || String(err);
+              let friendly = 'Otorisasi Google diblokir atau ditutup.';
+              if (rawMsg.includes('popup_closed') || rawMsg.includes('closed')) {
+                friendly = 'Jendela login Google ditutup sebelum otorisasi selesai.';
+              } else if (rawMsg.includes('blocked') || rawMsg.includes('denied') || rawMsg.includes('origin')) {
+                friendly = 'Google membatasi akses otomatis untuk domain ini. Gunakan fitur "Unduh Berkas Cadangan" di bawah untuk menyimpan file langsung ke Google Drive / HP Anda.';
+              }
+              reject(new Error(friendly));
             }
           });
 
           client.requestAccessToken({ prompt: silent ? 'none' : '' });
         } catch (err: any) {
-          reject(new Error(`Gagal menginisialisasi OAuth: ${err.message}`));
+          reject(new Error(`Gagal menginisialisasi Google OAuth: ${err.message}`));
         }
       };
 

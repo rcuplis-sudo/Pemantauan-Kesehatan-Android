@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Cloud, 
@@ -20,7 +20,15 @@ import {
   Smartphone,
   ToggleLeft,
   ToggleRight,
-  HelpCircle
+  HelpCircle,
+  Download,
+  Share2,
+  FileSpreadsheet,
+  Settings,
+  Info,
+  Key,
+  FolderDown,
+  Upload
 } from 'lucide-react';
 import { HealthEntry } from '../types';
 import { GoogleDriveService, GoogleDriveBackupFile, GoogleUserInfo } from '../services/googleDriveService';
@@ -40,7 +48,7 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
   onRestoreSuccess,
   onBackupSuccess
 }) => {
-  const [activeTab, setActiveTab] = useState<'sync' | 'backup' | 'restore'>('sync');
+  const [activeTab, setActiveTab] = useState<'quick' | 'sync' | 'backup' | 'restore' | 'settings'>('quick');
   const [isLoading, setIsLoading] = useState(false);
   const [loadingAction, setLoadingAction] = useState<string>('');
   const [backups, setBackups] = useState<GoogleDriveBackupFile[]>([]);
@@ -50,6 +58,10 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState<boolean>(() => GoogleDriveService.isAutoSyncEnabled());
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(() => GoogleDriveService.getLastSyncTime());
+  const [customClientId, setCustomClientId] = useState<string>(() => GoogleDriveService.getCustomClientId());
+  const [isSavedClientId, setIsSavedClientId] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Clear states when modal opens
   useEffect(() => {
@@ -58,6 +70,7 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
       setSuccessMsg(null);
       setAutoSync(GoogleDriveService.isAutoSyncEnabled());
       setLastSyncTime(GoogleDriveService.getLastSyncTime());
+      setCustomClientId(GoogleDriveService.getCustomClientId());
       loadAccountInfo();
     }
   }, [isOpen]);
@@ -73,6 +86,106 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
     } catch {}
   };
 
+  // Quick Direct Download JSON (100% Offline & Free from Google Blocks)
+  const handleDownloadJson = () => {
+    if (entries.length === 0) {
+      setErrorMsg('Belum ada data rekam medis untuk dicadangkan.');
+      return;
+    }
+    const fileName = GoogleDriveService.downloadLocalJsonBackup(entries);
+    setSuccessMsg(`Berkas cadangan "${fileName}" berhasil diunduh ke perangkat Anda! Simpan ke Google Drive atau folder aman.`);
+    onBackupSuccess();
+  };
+
+  // Quick Share to HP Google Drive app or WhatsApp
+  const handleShareToDrive = async () => {
+    if (entries.length === 0) {
+      setErrorMsg('Belum ada data rekam medis untuk dicadangkan.');
+      return;
+    }
+    setIsLoading(true);
+    setLoadingAction('Menyiapkan berkas cadangan...');
+    try {
+      const shared = await GoogleDriveService.shareBackupFile(entries);
+      if (shared) {
+        setSuccessMsg('Berkas cadangan berhasil disiapkan / dibagikan ke Google Drive.');
+        onBackupSuccess();
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Gagal membagikan berkas.');
+    } finally {
+      setIsLoading(false);
+      setLoadingAction('');
+    }
+  };
+
+  // Quick Download CSV for Excel
+  const handleDownloadCsv = () => {
+    if (entries.length === 0) {
+      setErrorMsg('Belum ada data rekam medis untuk diunduh.');
+      return;
+    }
+    const fileName = GoogleDriveService.downloadLocalCsvBackup(entries);
+    setSuccessMsg(`Berkas Excel/CSV "${fileName}" berhasil diunduh!`);
+  };
+
+  // Direct Restore from local file picked from phone/Google Drive
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsLoading(true);
+    setLoadingAction('Membaca berkas cadangan...');
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        let parsed: HealthEntry[] = [];
+
+        if (file.name.toLowerCase().endsWith('.json')) {
+          const raw = JSON.parse(text);
+          if (Array.isArray(raw)) {
+            parsed = raw;
+          } else if (raw && Array.isArray(raw.data)) {
+            parsed = raw.data;
+          } else {
+            throw new Error('Format JSON berkas cadangan tidak dikenali.');
+          }
+        } else if (file.name.toLowerCase().endsWith('.csv')) {
+          parsed = GoogleDriveService.parseCsv(text);
+        } else {
+          throw new Error('Harap pilih berkas dengan format .json atau .csv.');
+        }
+
+        if (parsed.length === 0) {
+          throw new Error('Berkas tidak memuat catatan riwayat medis.');
+        }
+
+        onRestoreSuccess(parsed);
+        setSuccessMsg(`Berhasil memulihkan ${parsed.length} catatan riwayat medis dari berkas!`);
+        setTimeout(() => {
+          onClose();
+        }, 1500);
+      } catch (err: any) {
+        setErrorMsg(err.message || 'Gagal memulihkan data dari berkas.');
+      } finally {
+        setIsLoading(false);
+        setLoadingAction('');
+      }
+    };
+
+    reader.onerror = () => {
+      setErrorMsg('Gagal membaca berkas dari penyimpanan.');
+      setIsLoading(false);
+      setLoadingAction('');
+    };
+
+    reader.readAsText(file);
+  };
+
   const handleToggleAutoSync = async () => {
     const nextState = !autoSync;
     setAutoSync(nextState);
@@ -81,6 +194,8 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
     if (nextState) {
       setIsLoading(true);
       setLoadingAction('Menghubungkan akun Google untuk sinkronisasi otomatis...');
+      setErrorMsg(null);
+      setSuccessMsg(null);
       try {
         const token = await GoogleDriveService.requestAccessToken();
         const profile = await GoogleDriveService.getUserProfile(token);
@@ -95,7 +210,7 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
       } catch (err: any) {
         setAutoSync(false);
         GoogleDriveService.setAutoSyncEnabled(false);
-        setErrorMsg(err.message || 'Gagal mengaktifkan sinkronisasi otomatis.');
+        setErrorMsg(err.message || 'Akses Google Drive dibatasi oleh kebijakan keamanan Google.');
       } finally {
         setIsLoading(false);
         setLoadingAction('');
@@ -204,6 +319,14 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
     }
   };
 
+  const handleSaveCustomClientId = (e: React.FormEvent) => {
+    e.preventDefault();
+    GoogleDriveService.setCustomClientId(customClientId);
+    setIsSavedClientId(true);
+    setSuccessMsg('Pengaturan Google Client ID berhasil disimpan!');
+    setTimeout(() => setIsSavedClientId(false), 3000);
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-2xl w-full overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200">
@@ -218,13 +341,13 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-lg sm:text-xl font-bold">Sinkronisasi Google Drive</h3>
+                <h3 className="text-lg sm:text-xl font-bold">Cadangan & Sinkronisasi Drive</h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20 border border-white/25">
-                  Multi-Device Sync
+                  100% Aman & Terlindungi
                 </span>
               </div>
               <p className="text-xs text-blue-100 mt-0.5">
-                Sinkron otomatis & cadangkan data ke akun Google Drive pribadi Anda
+                Simpan, cadangkan, dan pulihkan riwayat kesehatan Anda kapan pun
               </p>
             </div>
           </div>
@@ -238,37 +361,37 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
         </div>
 
         {/* Tab Controls */}
-        <div className="flex border-b border-slate-200 bg-slate-50 px-6 gap-2 overflow-x-auto">
+        <div className="flex border-b border-slate-200 bg-slate-50 px-4 sm:px-6 gap-1 sm:gap-2 overflow-x-auto">
+          <button
+            onClick={() => {
+              setActiveTab('quick');
+              setErrorMsg(null);
+              setSuccessMsg(null);
+            }}
+            className={`py-3.5 px-3 sm:px-4 text-xs font-bold border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'quick'
+                ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FolderDown className="w-4 h-4 text-blue-600" />
+            Cadangan Cepat (Bebas Blokir)
+          </button>
+
           <button
             onClick={() => {
               setActiveTab('sync');
               setErrorMsg(null);
               setSuccessMsg(null);
             }}
-            className={`py-3.5 px-4 text-xs font-bold border-b-2 transition flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            className={`py-3.5 px-3 sm:px-4 text-xs font-bold border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
               activeTab === 'sync'
                 ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
                 : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            Sinkronisasi Otomatis
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveTab('backup');
-              setErrorMsg(null);
-              setSuccessMsg(null);
-            }}
-            className={`py-3.5 px-4 text-xs font-bold border-b-2 transition flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-              activeTab === 'backup'
-                ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <CloudUpload className="w-4 h-4" />
-            Cadangkan Manual
+            Drive Auto-Sync
           </button>
 
           <button
@@ -276,14 +399,30 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
               setActiveTab('restore');
               loadBackupList();
             }}
-            className={`py-3.5 px-4 text-xs font-bold border-b-2 transition flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            className={`py-3.5 px-3 sm:px-4 text-xs font-bold border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
               activeTab === 'restore'
                 ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
                 : 'border-transparent text-slate-600 hover:text-slate-900'
             }`}
           >
             <CloudDownload className="w-4 h-4" />
-            Pulihkan dari Drive
+            Riwayat Cloud
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('settings');
+              setErrorMsg(null);
+              setSuccessMsg(null);
+            }}
+            className={`py-3.5 px-3 sm:px-4 text-xs font-bold border-b-2 transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'settings'
+                ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+            Pengaturan & Bantuan
           </button>
         </div>
 
@@ -292,14 +431,37 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
           
           {/* Notifications */}
           {errorMsg && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5 animate-in fade-in">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-2 animate-in fade-in">
+              <div className="flex items-start gap-2.5 font-bold">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>Pemberitahuan Sistem:</span>
+              </div>
+              <p className="leading-relaxed pl-6.5 text-rose-700">{errorMsg}</p>
+              
+              {/* Helpful quick action when Google blocks */}
+              {(errorMsg.includes('Google') || errorMsg.includes('diblokir') || errorMsg.includes('OAuth')) && (
+                <div className="pl-6.5 pt-2 flex flex-wrap gap-2">
+                  <button
+                    onClick={handleDownloadJson}
+                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Unduh File Cadangan Sekarang (Bebas Blokir)
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('settings')}
+                    className="px-3 py-1.5 bg-white border border-rose-300 text-rose-800 hover:bg-rose-100/60 rounded-xl font-semibold text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                    Lihat Solusi Google OAuth
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
           {successMsg && (
-            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2.5 animate-in fade-in">
+            <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2.5 animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <span>{successMsg}</span>
             </div>
@@ -328,7 +490,149 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
             </div>
           )}
 
-          {/* Tab: Sync Otomatis */}
+          {/* Tab 1: Cadangan Cepat & Berkas Lokal (Paling Handal & Bebas Blokir) */}
+          {activeTab === 'quick' && (
+            <div className="space-y-4">
+              
+              {/* Highlight Card */}
+              <div className="p-5 rounded-3xl bg-gradient-to-br from-emerald-50 via-teal-50/50 to-blue-50/40 border border-emerald-200/90 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      Cadangan Berkas Mandiri (100% Aman & Tanpa Blokir)
+                    </h4>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Cara paling praktis dan bebas masalah untuk mengamankan data kesehatan Anda. Anda dapat <strong>mengunduh berkas</strong> atau langsung <strong>membagikannya ke aplikasi Google Drive di HP</strong> tanpa perlu login OAuth browser yang sering diblokir Google.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                
+                {/* 1. Unduh Berkas JSON */}
+                <div className="p-4 rounded-2xl bg-white border border-slate-200/90 hover:border-blue-400 transition shadow-2xs space-y-3 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                      <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                        <FileJson className="w-4 h-4" />
+                      </div>
+                      <span>Unduh File Cadangan (.JSON)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Format lengkap HealthTrack ({entries.length} data). Simpan di HP, laptop, atau Google Drive Anda.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleDownloadJson}
+                    disabled={entries.length === 0}
+                    className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Unduh Berkas (.JSON)
+                  </button>
+                </div>
+
+                {/* 2. Bagikan ke Google Drive HP */}
+                <div className="p-4 rounded-2xl bg-white border border-slate-200/90 hover:border-indigo-400 transition shadow-2xs space-y-3 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                      <div className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                        <Share2 className="w-4 h-4" />
+                      </div>
+                      <span>Simpan ke Google Drive HP</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Buka menu Share di HP dan pilih ikon Google Drive / WhatsApp untuk menyimpan berkas.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleShareToDrive}
+                    disabled={entries.length === 0}
+                    className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    Bagi / Simpan ke Drive
+                  </button>
+                </div>
+
+                {/* 3. Unduh CSV Excel */}
+                <div className="p-4 rounded-2xl bg-white border border-slate-200/90 hover:border-emerald-400 transition shadow-2xs space-y-3 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                      <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                        <FileSpreadsheet className="w-4 h-4" />
+                      </div>
+                      <span>Ekspor Tabel Excel (.CSV)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Buka riwayat tensi, gula darah, dan kolesterol dalam bentuk tabel Microsoft Excel / Google Spreadsheet.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleDownloadCsv}
+                    disabled={entries.length === 0}
+                    className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Unduh Tabel Excel (.CSV)
+                  </button>
+                </div>
+
+                {/* 4. Pulihkan dari Berkas */}
+                <div className="p-4 rounded-2xl bg-white border border-slate-200/90 hover:border-amber-400 transition shadow-2xs space-y-3 flex flex-col justify-between">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json,.csv"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                      <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                        <Upload className="w-4 h-4" />
+                      </div>
+                      <span>Pulihkan dari Berkas Cadangan</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Pilih berkas JSON atau CSV yang tersimpan di HP atau Google Drive untuk mengembalikan seluruh data.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading}
+                    className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    Pilih File & Pulihkan
+                  </button>
+                </div>
+
+              </div>
+
+              {/* Status Ringkasan */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
+                <span>Total Data Tersedia: <strong>{entries.length} catatan medis</strong></span>
+                {lastSyncTime && (
+                  <span className="text-[11px] text-slate-500">
+                    Aktivitas terakhir: {new Date(lastSyncTime).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {/* Tab 2: Sync Otomatis Google Drive */}
           {activeTab === 'sync' && (
             <div className="space-y-4">
               <div className="p-5 rounded-3xl bg-gradient-to-br from-blue-50 via-indigo-50/60 to-purple-50/40 border border-blue-200/90 space-y-4">
@@ -336,10 +640,10 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
                   <div>
                     <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-blue-600" />
-                      Sinkronisasi Antar-Perangkat Otomatis
+                      Sinkronisasi API Google Drive Langsung
                     </h4>
                     <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                      Saat fitur ini aktif, setiap Anda menambahkan atau mengedit catatan rekam medis di HP atau laptop, data akan <strong>otomatis tersimpan ke Google Drive Anda</strong>. Ketika Anda membuka aplikasi di perangkat lain dengan email Google yang sama, data langsung tersinkronisasi!
+                      Menyinkronkan data secara otomatis ke folder khusus <strong>"HealthTrack_Backups"</strong> di akun Google Drive pribadi Anda.
                     </p>
                   </div>
 
@@ -362,7 +666,7 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
                 </div>
 
                 <div className="pt-3 border-t border-blue-200/60 flex items-center justify-between text-xs text-slate-600">
-                  <span>Status: <strong>{autoSync ? 'Aktif (Auto-Sync ON)' : 'Non-Aktif'}</strong></span>
+                  <span>Status Auto-Sync: <strong>{autoSync ? 'Aktif (ON)' : 'Non-Aktif'}</strong></span>
                   {lastSyncTime && (
                     <span className="text-[11px] text-slate-500">
                       Terakhir disinkronkan: {new Date(lastSyncTime).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
@@ -371,17 +675,15 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
                 </div>
               </div>
 
-              {/* Multi-User explanation card */}
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-2.5">
-                <h5 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Smartphone className="w-4 h-4 text-indigo-600" />
-                  Bagaimana jika diinstal di perangkat lain dengan email yang sama?
-                </h5>
-                <ol className="text-xs text-slate-600 space-y-1.5 list-decimal list-inside leading-relaxed">
-                  <li>Buka aplikasi di HP, tablet, atau laptop baru Anda.</li>
-                  <li>Klik tombol <strong>"Google Drive"</strong> dan pilih akun Google yang sama.</li>
-                  <li>Aplikasi akan otomatis mendeteksi cadangan terbaru Anda dan menyelaraskan seluruh riwayat kesehatan Anda dalam hitungan detik!</li>
-                </ol>
+              {/* Penjelasan jika diblokir Google */}
+              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 space-y-2">
+                <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Mengapa Muncul Notifikasi "Diblokir oleh Google"?</span>
+                </div>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  Google memblokir login otomatis pada aplikasi web/APK yang domainnya belum didaftarkan di <em>Google Cloud Console OAuth Screen</em>. Jika Anda mengalami kendala ini, silakan gunakan tab <strong>"Cadangan Cepat (Bebas Blokir)"</strong> untuk mengunduh dan menyimpan berkas cadangan langsung ke Google Drive di HP Anda!
+                </p>
               </div>
 
               <button
@@ -397,75 +699,19 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
                 ) : (
                   <>
                     <CloudUpload className="w-4 h-4" />
-                    Sinkronkan Seluruh Data ({entries.length} Catatan) Sekarang
+                    Sinkronkan Seluruh Data ({entries.length} Catatan) ke Google Drive
                   </>
                 )}
               </button>
             </div>
           )}
 
-          {/* Tab: Backup Manual */}
-          {activeTab === 'backup' && (
-            <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200/70 space-y-2">
-                <div className="flex items-center gap-2 text-blue-900 font-bold text-sm">
-                  <CloudUpload className="w-4 h-4 text-blue-600" />
-                  Pencadangan Manual ke Folder Google Drive
-                </div>
-                <p className="text-xs text-blue-800 leading-relaxed">
-                  File cadangan akan disimpan di folder <strong>"HealthTrack_Backups"</strong> di Google Drive Anda. Setiap file dilengkapi stempel tanggal & waktu lengkap.
-                </p>
-              </div>
-
-              {/* Status Data Saat Ini */}
-              <div className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3">
-                <h5 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Ringkasan Data Saat Ini</h5>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                    <span className="text-slate-500 block mb-1">Total Rekam Medis:</span>
-                    <span className="text-lg font-black text-slate-800">{entries.length} data</span>
-                  </div>
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                    <span className="text-slate-500 block mb-1">Pemeriksaan Terakhir:</span>
-                    <span className="text-sm font-bold text-slate-800">
-                      {entries.length > 0 ? entries[entries.length - 1].tanggal : 'Belum ada'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Button */}
-              <button
-                onClick={handleBackupNow}
-                disabled={isLoading || entries.length === 0}
-                className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-2xl shadow-md shadow-blue-500/20 transition flex items-center justify-center gap-2 text-sm cursor-pointer"
-              >
-                {isLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>{loadingAction || 'Memproses...'}</span>
-                  </>
-                ) : (
-                  <>
-                    <CloudUpload className="w-4 h-4" />
-                    Cadangkan ke Google Drive Sekarang
-                  </>
-                )}
-              </button>
-
-              <div className="p-3 bg-emerald-50/80 border border-emerald-200/80 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Setiap pengguna memiliki ruang penyimpanan terpisah di Google Drive masing-masing.</span>
-              </div>
-            </div>
-          )}
-
-          {/* Tab: Restore View */}
+          {/* Tab 3: Riwayat Cadangan Cloud */}
           {activeTab === 'restore' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-bold text-slate-900">Pilih File Cadangan untuk Dipulihkan</h4>
+                  <h4 className="text-sm font-bold text-slate-900">Pilih File Cadangan Cloud</h4>
                   <p className="text-xs text-slate-500">Ditemukan {backups.length} file cadangan di Google Drive</p>
                 </div>
                 <button
@@ -486,9 +732,9 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
               ) : backups.length === 0 ? (
                 <div className="py-8 px-4 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
                   <FileJson className="w-8 h-8 text-slate-400 mx-auto" />
-                  <p className="text-xs font-semibold text-slate-700">Belum Ada File Cadangan di Google Drive Akun Ini</p>
+                  <p className="text-xs font-semibold text-slate-700">Belum Ada File Cadangan Cloud Terdeteksi</p>
                   <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
-                    Buat cadangan pertama Anda pada tab <strong>"Sinkronisasi Otomatis"</strong> atau <strong>"Cadangkan Manual"</strong>.
+                    Jika Anda memiliki file cadangan (.json) di HP atau komputer, Anda dapat langsung mengembalikannya melalui tab <strong>"Cadangan Cepat (Bebas Blokir)"</strong>.
                   </p>
                 </div>
               ) : (
@@ -573,13 +819,74 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
             </div>
           )}
 
+          {/* Tab 4: Pengaturan Client ID & Panduan Bantuan */}
+          {activeTab === 'settings' && (
+            <div className="space-y-4 text-xs">
+              <div className="p-4 rounded-2xl bg-blue-50/60 border border-blue-200/70 space-y-2">
+                <h5 className="font-bold text-slate-900 flex items-center gap-1.5 text-sm">
+                  <Key className="w-4 h-4 text-blue-600" />
+                  Kustomisasi Google OAuth Client ID (Opsional)
+                </h5>
+                <p className="text-slate-600 leading-relaxed">
+                  Jika Anda ingin menggunakan sinkronisasi API Google Drive tanpa peringatan keamanan, Anda dapat membuat <strong>OAuth Client ID</strong> gratis di Google Cloud Console dan menempelkannya di sini:
+                </p>
+
+                <form onSubmit={handleSaveCustomClientId} className="pt-2 space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="contoh: 123456789-abc.apps.googleusercontent.com"
+                      value={customClientId}
+                      onChange={(e) => setCustomClientId(e.target.value)}
+                      className="flex-1 px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-slate-800"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition cursor-pointer whitespace-nowrap"
+                    >
+                      {isSavedClientId ? 'Tersimpan!' : 'Simpan ID'}
+                    </button>
+                  </div>
+                  {customClientId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomClientId('');
+                        GoogleDriveService.setCustomClientId('');
+                        setSuccessMsg('Google Client ID kustom telah direset ke default.');
+                      }}
+                      className="text-[11px] text-rose-600 hover:underline cursor-pointer"
+                    >
+                      Reset ke Client ID bawaan
+                    </button>
+                  )}
+                </form>
+              </div>
+
+              {/* Panduan Ringkas */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                <h5 className="font-bold text-slate-900">Solusi Rekomendasi Tercepat:</h5>
+                <div className="space-y-2 text-slate-600 leading-relaxed">
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span><strong>Gunakan Cadangan Cepat:</strong> Cukup klik <em>"Unduh Berkas (.JSON)"</em> atau <em>"Simpan ke Drive lewat HP"</em> di tab pertama. Berkas dapat disimpan langsung ke Google Drive Anda melalui aplikasi Drive bawaan HP Anda.</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span><strong>100% Bebas Blokir:</strong> Metode berkas lokal dan share HP tidak bergantung pada otorisasi browser, sehingga dijamin selalu berhasil di perangkat mana pun.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
 
         {/* Modal Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-xs text-slate-500">
           <div className="flex items-center gap-1.5">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>Izin Google Drive Terverifikasi</span>
+            <span>Pencadangan Berkas Terenkripsi Lokal</span>
           </div>
           <button
             onClick={onClose}
